@@ -94,7 +94,7 @@ def test(data,
         print("Testing with YOLOv5 AP metric...")
     
     seen = 0
-    confusion_matrix = ConfusionMatrix(nc=nc)
+    confusion_matrix = ConfusionMatrix(nc=nc,conf = conf_thres, iou_thres = iou_thres)
     names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
