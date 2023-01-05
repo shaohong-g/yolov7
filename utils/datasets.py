@@ -125,6 +125,85 @@ class _RepeatSampler(object):
             yield from iter(self.sampler)
 
 
+class LoadRdms:  # for inference
+    def __init__(self, path, img_size=640, stride=32, in_size= None):
+        import sys, h5py
+        sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))) # make sure that to append soic-aiml to sys path
+        print(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))))
+        from shaohong.radar_process import RDMProcessor
+        from configuration.cfg_main import RadarConfigure
+
+        p = os.path.realpath(path)
+        if os.path.exists(p) and os.path.isdir(p):
+            files = glob.glob(os.path.join(p, "*.hdf5"))
+            files.sort()
+
+            self.path = files[0]
+            self.rdms = []
+            self.ts = []
+            cfg = RadarConfigure()
+            cfg.dsp.cvt_ratio = 20
+            rdm_processor = RDMProcessor(cfg, channel = [0])
+            
+            for path in files:
+                with h5py.File(path, "r") as f: # label = list(f.keys()) # - ['radar_raw', 'timestamps']
+                    self.ts = f['timestamps'][:]
+                    assert all(self.ts[i] < self.ts[i+1] for i in range(len(self.ts) - 1)), "timestamps are not sorted!"
+
+                    frame_labels = list(f['radar_raw'].keys()) 
+                    frame_labels_abs = [int(x[5:]) for x in frame_labels]
+                    frame_labels_rank = np.argsort(frame_labels_abs)
+                    
+                    for i, idx in enumerate(frame_labels_rank):
+                        rdm_single_rcnn_uint8 = rdm_processor.get_RDM(f['radar_raw'][frame_labels[idx]])
+                        rdm_single_rcnn_uint8 = np.squeeze(rdm_single_rcnn_uint8, axis=0)
+                        self.rdms.append(rdm_single_rcnn_uint8)
+                        # yield frame_labels[idx], rdm_single_rcnn_uint8, ts[i]
+        else:
+            raise Exception(f'ERROR: {p} does not exist')
+
+        self.nf = len(self.rdms)
+        self.img_size = img_size
+        self.stride = stride
+        self.in_size = in_size
+        if self.in_size is not None: assert max(self.in_size) <= self.img_size
+
+        self.mode = 'rdm'
+        self.cap = None
+
+    def __iter__(self):
+        self.count = 0
+        return self
+
+    def __next__(self):
+        if self.count == self.nf:
+            raise StopIteration
+        
+        rdm = self.rdms[self.count]
+                
+        # Process rdm
+        self.count += 1
+        self.frame = self.count
+
+        # img0 = cv2.imread(path)  # BGR
+        img0 = cv2.cvtColor(rdm,cv2.COLOR_GRAY2RGB) 
+        if self.in_size is not None and len(self.in_size) == 2:
+            img0 = cv2.resize(img0, self.in_size, interpolation = cv2.INTER_AREA)
+
+        # Padded resize
+        img = letterbox(img0, self.img_size, stride=self.stride)[0]
+
+        # Convert
+        # img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
+        img = img.transpose(2, 0, 1)
+        img = np.ascontiguousarray(img)
+
+        return self.path, img, img0, self.cap
+
+    def __len__(self):
+        return self.nf  # number of frames
+
+
 class LoadImages:  # for inference
     def __init__(self, path, img_size=640, stride=32):
         p = str(Path(path).absolute())  # os-agnostic absolute path
